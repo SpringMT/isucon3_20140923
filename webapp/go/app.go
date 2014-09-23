@@ -9,6 +9,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
+	"github.com/sonots/go-sql_metrics"
+	"github.com/sonots/go-template_metrics"
 	"html/template"
 	"io/ioutil"
 	"log"
@@ -77,7 +79,7 @@ type View struct {
 }
 
 var (
-	dbConnPool chan *sql.DB
+	dbConnPool chan *sql_metrics.DB
 	baseUrl    *url.URL
 	fmap       = template.FuncMap{
 		"url_for": func(path string) string {
@@ -107,7 +109,7 @@ var (
 			return template.HTML(out)
 		},
 	}
-	tmpl = template.Must(template.New("tmpl").Funcs(fmap).ParseGlob("templates/*.html"))
+	tmpl = template_metrics.WrapTemplate("tmpl", template.Must(template.New("tmpl").Funcs(fmap).ParseGlob("templates/*.html")))
 )
 
 func main() {
@@ -125,9 +127,10 @@ func main() {
 	)
 	log.Printf("db: %s", connectionString)
 
-	dbConnPool = make(chan *sql.DB, dbConnPoolSize)
+	dbConnPool = make(chan *sql_metrics.DB, dbConnPoolSize)
 	for i := 0; i < dbConnPoolSize; i++ {
-		conn, err := sql.Open("mysql", connectionString)
+		_conn, err := sql.Open("mysql", connectionString)
+		conn := sql_metrics.WrapDB("mysql", _conn)
 		if err != nil {
 			log.Panicf("Error opening database: %v", err)
 		}
@@ -146,6 +149,13 @@ func main() {
 	r.HandleFunc("/recent/{page:[0-9]+}", recentHandler)
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
 	http.Handle("/", r)
+
+	// sql_metrics.Verbose = true
+	sql_metrics.Print(70)
+
+	// template_metrics.Verbose = true
+	template_metrics.Print(70)
+
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
 }
 
@@ -178,7 +188,7 @@ func loadSession(w http.ResponseWriter, r *http.Request) (session *sessions.Sess
 	return store.Get(r, sessionName)
 }
 
-func getUser(w http.ResponseWriter, r *http.Request, dbConn *sql.DB, session *sessions.Session) *User {
+func getUser(w http.ResponseWriter, r *http.Request, dbConn *sql_metrics.DB, session *sessions.Session) *User {
 	userId := session.Values["user_id"]
 	if userId == nil {
 		return nil
