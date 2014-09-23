@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync"
+	_ "sync/atomic"
 )
 
 const (
@@ -43,6 +45,10 @@ type PageCache struct {
 	page   string
 	expire int64
 }
+
+var totalCount int
+
+var mutex = &sync.Mutex{}
 
 var PageCaches map[int]PageCache = map[int]PageCache{}
 
@@ -169,6 +175,18 @@ func main() {
 
 	// template_metrics.Verbose = true
 	template_metrics.Print(70)
+	dbConn := <-dbConnPool
+	defer func() {
+		dbConnPool <- dbConn
+	}()
+
+	initial_rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
+	if err != nil {
+	}
+	if initial_rows.Next() {
+		initial_rows.Scan(&totalCount)
+	}
+	initial_rows.Close()
 
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
 }
@@ -256,18 +274,18 @@ func topHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 	user := getUser(w, r, dbConn, session)
 
-	var totalCount int
-	rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	if rows.Next() {
-		rows.Scan(&totalCount)
-	}
-	rows.Close()
+	//var totalCount int
+	//rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
+	//if err != nil {
+	//	serverError(w, err)
+	//	return
+	//}
+	//if rows.Next() {
+	//	rows.Scan(&totalCount)
+	//}
+	//rows.Close()
 
-	rows, err = dbConn.Query("SELECT * FROM memos WHERE is_private=0 ORDER BY created_at DESC, id DESC LIMIT ?", memosPerPage)
+	rows, err := dbConn.Query("SELECT * FROM memos WHERE is_private=0 ORDER BY created_at DESC, id DESC LIMIT ?", memosPerPage)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -319,18 +337,18 @@ func recentHandler(w http.ResponseWriter, r *http.Request) {
 	cache := PageCaches[page]
 	if cache.expire == 0 || cache.expire < time.Now().UnixNano() {
 
-		rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
-		if err != nil {
-			serverError(w, err)
-			return
-		}
-		var totalCount int
-		if rows.Next() {
-			rows.Scan(&totalCount)
-		}
-		rows.Close()
+		//rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
+		//if err != nil {
+		//	serverError(w, err)
+		//	return
+		//}
+		//var totalCount int
+		//if rows.Next() {
+		//	rows.Scan(&totalCount)
+		//}
+		//rows.Close()
 
-		rows, err = dbConn.Query("SELECT * FROM memos WHERE is_private=0 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", memosPerPage, memosPerPage*page)
+		rows, err := dbConn.Query("SELECT * FROM memos WHERE is_private=0 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", memosPerPage, memosPerPage*page)
 		if err != nil {
 			serverError(w, err)
 			return
@@ -614,6 +632,9 @@ func memoPostHandler(w http.ResponseWriter, r *http.Request) {
 		isPrivate = 1
 	} else {
 		isPrivate = 0
+		mutex.Lock()
+		totalCount += 1
+		mutex.Unlock()
 	}
 	result, err := dbConn.Exec(
 		"INSERT INTO memos (user, content, is_private, created_at) VALUES (?, ?, ?, now())",
