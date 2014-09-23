@@ -27,7 +27,7 @@ import (
 const (
 	maxConnectionCount = 256
 	memosPerPage       = 100
-	listenAddr         = ":5000"
+	listenAddr         = ":5001"
 	sessionName        = "isucon_session"
 	tmpDir             = "/tmp/"
 	markdownCommand    = "../bin/markdown"
