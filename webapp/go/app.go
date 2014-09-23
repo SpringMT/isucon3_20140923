@@ -9,6 +9,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
+	"github.com/sonots/go-http_metrics"
 	"github.com/sonots/go-sql_metrics"
 	"github.com/sonots/go-template_metrics"
 	"html/template"
@@ -139,16 +140,19 @@ func main() {
 	}
 
 	r := mux.NewRouter()
-	r.HandleFunc("/", topHandler)
-	r.HandleFunc("/signin", signinHandler).Methods("GET", "HEAD")
-	r.HandleFunc("/signin", signinPostHandler).Methods("POST")
-	r.HandleFunc("/signout", signoutHandler)
-	r.HandleFunc("/mypage", mypageHandler)
-	r.HandleFunc("/memo/{memo_id}", memoHandler).Methods("GET", "HEAD")
-	r.HandleFunc("/memo", memoPostHandler).Methods("POST")
-	r.HandleFunc("/recent/{page:[0-9]+}", recentHandler)
-	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./public/")))
+	r.HandleFunc("/", http_metrics.WrapHandlerFunc("topHandler", topHandler))
+	r.HandleFunc("/signin", http_metrics.WrapHandlerFunc("signinHandler", signinHandler)).Methods("GET", "HEAD")
+	r.HandleFunc("/signin", http_metrics.WrapHandlerFunc("signinPostHandler", signinPostHandler)).Methods("POST")
+	r.HandleFunc("/signout", http_metrics.WrapHandlerFunc("signoutHandler", signoutHandler))
+	r.HandleFunc("/mypage", http_metrics.WrapHandlerFunc("mypageHandler", mypageHandler))
+	r.HandleFunc("/memo/{memo_id}", http_metrics.WrapHandlerFunc("memoHandler", memoHandler)).Methods("GET", "HEAD")
+	r.HandleFunc("/memo", http_metrics.WrapHandlerFunc("memoPostHandler", memoPostHandler)).Methods("POST")
+	r.HandleFunc("/recent/{page:[0-9]+}", http_metrics.WrapHandlerFunc("recentHandler", recentHandler))
+	r.PathPrefix("/").Handler(http_metrics.WrapHandler("public", http.FileServer(http.Dir("./public/"))))
 	http.Handle("/", r)
+
+	http_metrics.Verbose = true
+	http_metrics.Print(70)
 
 	// sql_metrics.Verbose = true
 	sql_metrics.Print(70)

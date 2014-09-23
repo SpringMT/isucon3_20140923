@@ -1,0 +1,8 @@
+go get "github.com/bradfitz/gomemcache/memcache"
+go get "github.com/go-sql-driver/mysql"
+go get "github.com/gorilla/context"
+go get "github.com/gorilla/mux"
+go get "github.com/gorilla/securecookie"
+go get "github.com/sonots/go-sql_metrics"
+go get "github.com/sonots/go-template_metrics"
+go get "github.com/sonots/go-http_metrics"
