@@ -1,0 +1,15 @@
+{{define "index_bottom"}}
+
+</p>
+<ul id="memos">
+{{ range .Memos }}
+<li>
+  <a href="{{ url_for "/memo/" }}{{ .Id }}">{{ first_line .Content }}</a> by {{ .Username }} ({{ .CreatedAt }})
+</li>
+{{ end }}
+</ul>
+
+{{ template "base_bottom" .}}
+
+{{ end }}
+

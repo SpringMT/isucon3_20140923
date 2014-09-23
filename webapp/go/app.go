@@ -24,7 +24,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 	"sync"
 	_ "sync/atomic"
 )
@@ -41,13 +40,16 @@ const (
 	sessionSecret      = "kH<{11qpic*gf0e21YK7YtwyUvE9l<1r>yX8R-Op"
 )
 
+// formerPage
+// totalCount
+// latterPage
 type PageCache struct {
-	page   string
-	expire int64
+	page_top    string
+	page_bottom string
+	expire      int64
 }
 
 var totalCount int
-
 var mutex = &sync.Mutex{}
 
 var PageCaches map[int]PageCache = map[int]PageCache{}
@@ -167,7 +169,7 @@ func main() {
 	r.PathPrefix("/").Handler(http_metrics.WrapHandler("public", http.FileServer(http.Dir("./public/"))))
 	http.Handle("/", r)
 
-	// http_metrics.Verbose = true
+	//http_metrics.Verbose = true
 	http_metrics.Print(70)
 
 	// sql_metrics.Verbose = true
@@ -175,11 +177,11 @@ func main() {
 
 	// template_metrics.Verbose = true
 	template_metrics.Print(70)
+
 	dbConn := <-dbConnPool
 	defer func() {
 		dbConnPool <- dbConn
 	}()
-
 	initial_rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
 	if err != nil {
 	}
@@ -335,7 +337,7 @@ func recentHandler(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(vars["page"])
 
 	cache := PageCaches[page]
-	if cache.expire == 0 || cache.expire < time.Now().UnixNano() {
+	if cache.expire == 0 {
 
 		//rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
 		//if err != nil {
@@ -381,15 +383,21 @@ func recentHandler(w http.ResponseWriter, r *http.Request) {
 			Session:   session,
 		}
 
-		buf := bytes.Buffer{}
-		if err = tmpl.ExecuteTemplate(&buf, "index", v); err != nil {
+		bufTop := bytes.Buffer{}
+		if err = tmpl.ExecuteTemplate(&bufTop, "index_top", v); err != nil {
+			serverError(w, err)
+		}
+		bufBottom := bytes.Buffer{}
+		if err = tmpl.ExecuteTemplate(&bufBottom, "index_bottom", v); err != nil {
 			serverError(w, err)
 		}
 
-		cache = PageCache{buf.String(), time.Now().Add(time.Second / 2).UnixNano()}
+		cache = PageCache{bufTop.String(), bufBottom.String(), 1}
 		PageCaches[page] = cache
 	}
-	io.WriteString(w, cache.page)
+	io.WriteString(w, cache.page_top)
+	io.WriteString(w, fmt.Sprintf("<span id=\"total\">%d</span>", totalCount))
+	io.WriteString(w, cache.page_bottom)
 }
 
 func signinHandler(w http.ResponseWriter, r *http.Request) {
@@ -635,6 +643,7 @@ func memoPostHandler(w http.ResponseWriter, r *http.Request) {
 		mutex.Lock()
 		totalCount += 1
 		mutex.Unlock()
+		log.Printf("totalCount %d", totalCount)
 	}
 	result, err := dbConn.Exec(
 		"INSERT INTO memos (user, content, is_private, created_at) VALUES (?, ?, ?, now())",

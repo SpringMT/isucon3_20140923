@@ -1,0 +1,9 @@
+{{define "index_top"}}
+
+{{ template "base_top" .}}
+
+<h3>public memos</h3>
+<p id="pager">
+  recent {{ .PageStart }} - {{ .PageEnd }} / total
+
+{{ end }}
