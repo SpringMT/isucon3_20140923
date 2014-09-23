@@ -2,6 +2,7 @@ package main
 
 import (
 	"./sessions"
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"github.com/sonots/go-sql_metrics"
 	"github.com/sonots/go-template_metrics"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -22,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -35,6 +38,13 @@ const (
 	memcachedServer    = "localhost:11211"
 	sessionSecret      = "kH<{11qpic*gf0e21YK7YtwyUvE9l<1r>yX8R-Op"
 )
+
+type PageCache struct {
+	page   string
+	expire int64
+}
+
+var PageCaches map[int]PageCache = map[int]PageCache{}
 
 type Config struct {
 	Database struct {
@@ -306,52 +316,62 @@ func recentHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	page, _ := strconv.Atoi(vars["page"])
 
-	rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	var totalCount int
-	if rows.Next() {
-		rows.Scan(&totalCount)
-	}
-	rows.Close()
+	cache := PageCaches[page]
+	if cache.expire == 0 || cache.expire < time.Now().UnixNano() {
 
-	rows, err = dbConn.Query("SELECT * FROM memos WHERE is_private=0 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", memosPerPage, memosPerPage*page)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	memos := make(Memos, 0)
-	stmtUser, err := dbConn.Prepare("SELECT username FROM users WHERE id=?")
-	defer stmtUser.Close()
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	for rows.Next() {
-		memo := Memo{}
-		rows.Scan(&memo.Id, &memo.User, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
-		stmtUser.QueryRow(memo.User).Scan(&memo.Username)
-		memos = append(memos, &memo)
-	}
-	if len(memos) == 0 {
-		notFound(w)
-		return
-	}
+		rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		var totalCount int
+		if rows.Next() {
+			rows.Scan(&totalCount)
+		}
+		rows.Close()
 
-	v := &View{
-		Total:     totalCount,
-		Page:      page,
-		PageStart: memosPerPage*page + 1,
-		PageEnd:   memosPerPage * (page + 1),
-		Memos:     &memos,
-		User:      user,
-		Session:   session,
+		rows, err = dbConn.Query("SELECT * FROM memos WHERE is_private=0 ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", memosPerPage, memosPerPage*page)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		memos := make(Memos, 0)
+		stmtUser, err := dbConn.Prepare("SELECT username FROM users WHERE id=?")
+		defer stmtUser.Close()
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		for rows.Next() {
+			memo := Memo{}
+			rows.Scan(&memo.Id, &memo.User, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
+			stmtUser.QueryRow(memo.User).Scan(&memo.Username)
+			memos = append(memos, &memo)
+		}
+		if len(memos) == 0 {
+			notFound(w)
+			return
+		}
+
+		v := &View{
+			Total:     totalCount,
+			Page:      page,
+			PageStart: memosPerPage*page + 1,
+			PageEnd:   memosPerPage * (page + 1),
+			Memos:     &memos,
+			User:      user,
+			Session:   session,
+		}
+
+		buf := bytes.Buffer{}
+		if err = tmpl.ExecuteTemplate(&buf, "index", v); err != nil {
+			serverError(w, err)
+		}
+
+		cache = PageCache{buf.String(), time.Now().Add(time.Second / 2).UnixNano()}
+		PageCaches[page] = cache
 	}
-	if err = tmpl.ExecuteTemplate(w, "index", v); err != nil {
-		serverError(w, err)
-	}
+	io.WriteString(w, cache.page)
 }
 
 func signinHandler(w http.ResponseWriter, r *http.Request) {
