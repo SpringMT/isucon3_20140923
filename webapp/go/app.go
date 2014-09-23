@@ -151,7 +151,7 @@ func main() {
 	r.PathPrefix("/").Handler(http_metrics.WrapHandler("public", http.FileServer(http.Dir("./public/"))))
 	http.Handle("/", r)
 
-	http_metrics.Verbose = true
+	// http_metrics.Verbose = true
 	http_metrics.Print(70)
 
 	// sql_metrics.Verbose = true
