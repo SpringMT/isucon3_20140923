@@ -49,10 +49,14 @@ type PageCache struct {
 	expire      int64
 }
 
-var totalCount int
 var mutex = &sync.Mutex{}
 
+var publicTotalCount int
+var totalCount int
 var PageCaches map[int]PageCache = map[int]PageCache{}
+var PublicMemoCache []*Memo = make([]*Memo, 0, 300000)
+var AllMemoCache []*Memo = make([]*Memo, 0, 300000)
+var UserMemoCache map[int][]*Memo = make(map[int][]*Memo)
 
 type Config struct {
 	Database struct {
@@ -131,6 +135,58 @@ var (
 	tmpl = template_metrics.WrapTemplate("tmpl", template.Must(template.New("tmpl").Funcs(fmap).ParseGlob("templates/*.html")))
 )
 
+func initMemoCache() {
+	dbConn := <-dbConnPool
+	defer func() {
+		dbConnPool <- dbConn
+	}()
+
+	rows, err := dbConn.Query("SELECT * FROM memos WHERE is_private=0 ORDER BY created_at DESC, id DESC")
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	for rows.Next() {
+		memo := Memo{}
+		rows.Scan(&memo.Id, &memo.User, &memo.Username, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
+		if memo.IsPrivate == 0 {
+			PublicMemoCache = append(PublicMemoCache, &memo)
+		}
+		AllMemoCache = append(AllMemoCache, &memo)
+		UserMemoCache[memo.User] = append(UserMemoCache[memo.User], &memo)
+	}
+}
+
+func appendMemo(memo *Memo) {
+	if memo.IsPrivate == 0 {
+		PublicMemoCache = append(PublicMemoCache, memo)
+		publicTotaCount += 1
+	} else {
+		AllMemoCache = append(AllMemoCache, memo)
+		totalCount += 1
+	}
+	UserMemoCache[memo.User] = append(UserMemoCache[memo.User], memo)
+}
+
+func initTotalCount() {
+	dbConn := <-dbConnPool
+	defer func() {
+		dbConnPool <- dbConn
+	}()
+
+	initial_rows, _ := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
+	if initial_rows.Next() {
+		initial_rows.Scan(&totalCount)
+	}
+	initial_rows.Close()
+
+	rows, _ := dbConn.Query("SELECT count(*) AS c FROM memos")
+	if rows.Next() {
+		rows.Scan(&publicTotalCount)
+	}
+	rows.Close()
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
@@ -178,17 +234,7 @@ func main() {
 	// template_metrics.Verbose = true
 	template_metrics.Print(70)
 
-	dbConn := <-dbConnPool
-	defer func() {
-		dbConnPool <- dbConn
-	}()
-	initial_rows, err := dbConn.Query("SELECT count(*) AS c FROM memos WHERE is_private=0")
-	if err != nil {
-	}
-	if initial_rows.Next() {
-		initial_rows.Scan(&totalCount)
-	}
-	initial_rows.Close()
+	initMemoCache()
 
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
 }
@@ -366,7 +412,7 @@ func recentHandler(w http.ResponseWriter, r *http.Request) {
 			memo := Memo{}
 			rows.Scan(&memo.Id, &memo.User, &memo.Username, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
 			//stmtUser.QueryRow(memo.User).Scan(&memo.Username)
-			memos = append(memos, &memo)
+			appendMemo(&memo)
 		}
 		if len(memos) == 0 {
 			notFound(w)
@@ -507,19 +553,19 @@ func mypageHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	rows, err := dbConn.Query("SELECT id, content, is_private, created_at, updated_at FROM memos WHERE user=? ORDER BY created_at DESC", user.Id)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	memos := make(Memos, 0)
-	for rows.Next() {
-		memo := Memo{}
-		rows.Scan(&memo.Id, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
-		memos = append(memos, &memo)
-	}
+	//rows, err := dbConn.Query("SELECT id, content, is_private, created_at, updated_at FROM memos WHERE user=? ORDER BY created_at DESC", user.Id)
+	//if err != nil {
+	//	serverError(w, err)
+	//	return
+	//}
+	//memos := make(Memos, 0)
+	//for rows.Next() {
+	//	memo := Memo{}
+	//	rows.Scan(&memo.Id, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
+	//	memos = append(memos, &memo)
+	//}
 	v := &View{
-		Memos:   &memos,
+		Memos:   UserMemoCache[user.Id],
 		User:    user,
 		Session: session,
 	}
@@ -543,19 +589,24 @@ func memoHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 	user := getUser(w, r, dbConn, session)
 
-	rows, err := dbConn.Query("SELECT id, user, username, content, is_private, created_at, updated_at FROM memos WHERE id=?", memoId)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	memo := &Memo{}
-	if rows.Next() {
-		rows.Scan(&memo.Id, &memo.User, &memo.Username, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
-		rows.Close()
-	} else {
+	//rows, err := dbConn.Query("SELECT id, user, username, content, is_private, created_at, updated_at FROM memos WHERE id=?", memoId)
+	//if err != nil {
+	//	serverError(w, err)
+	//	return
+	//}
+	//memo := &Memo{}
+	//if rows.Next() {
+	//	rows.Scan(&memo.Id, &memo.User, &memo.Username, &memo.Content, &memo.IsPrivate, &memo.CreatedAt, &memo.UpdatedAt)
+	//	rows.Close()
+	//} else {
+	//	notFound(w)
+	//	return
+	//}
+	if memoId > len(AllMemoCache) {
 		notFound(w)
 		return
 	}
+	memo := AllMemoCache[memoId]
 	if memo.IsPrivate == 1 {
 		if user == nil || user.Id != memo.User {
 			notFound(w)
@@ -645,14 +696,25 @@ func memoPostHandler(w http.ResponseWriter, r *http.Request) {
 		mutex.Unlock()
 		log.Printf("totalCount %d", totalCount)
 	}
-	result, err := dbConn.Exec(
-		"INSERT INTO memos (user, username, content, is_private, created_at) VALUES (?, ?, ?, now())",
-		user.Id, user.Username, r.FormValue("content"), isPrivate,
-	)
-	if err != nil {
-		serverError(w, err)
-		return
+	//result, err := dbConn.Exec(
+	//	"INSERT INTO memos (user, username, content, is_private, created_at) VALUES (?, ?, ?, now())",
+	//	user.Id, user.Username, r.FormValue("content"), isPrivate,
+	//)
+	//if err != nil {
+	//	serverError(w, err)
+	//	return
+	//}
+	//newId, _ := result.LastInsertId()
+	newId := len(MemoCache) + 1
+	memo := &Memo{
+		Id:        newId,
+		User:      user.Id,
+		Username:  user.Username,
+		Content:   r.FormValue("content"),
+		IsPrivate: isPrivate,
+		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+		UpdatedAt: time.Now().Format("2006-01-02 15:04:05"),
 	}
-	newId, _ := result.LastInsertId()
+	append(memo, MemoCache)
 	http.Redirect(w, r, fmt.Sprintf("/memo/%d", newId), http.StatusFound)
 }
